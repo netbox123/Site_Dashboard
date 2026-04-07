@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Site Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Site Dashboard</h1>
+    <button id="btn-add" class="btn btn-primary">+ Add Website</button>
+  </header>
+
+  <main id="sites-grid"></main>
+
+  <section id="log-panel">
+    <div id="log-header">
+      <span id="log-title">Logs</span>
+      <div id="log-actions">
+        <label class="checkbox-label" style="font-size:0.78rem">
+          <input id="log-autoscroll" type="checkbox" checked /> Auto-scroll
+        </label>
+        <button class="btn" id="btn-log-clear">Clear</button>
+        <a class="btn" id="btn-log-download" href="/api/logs/download" download="dashboard.log">Download</a>
+      </div>
+    </div>
+    <pre id="log-output"></pre>
+  </section>
+
+  <!-- Add Website Modal -->
+  <div id="modal-overlay" class="hidden">
+    <div class="modal">
+      <h2>Add Website</h2>
+      <label>ID (unique slug)<input id="f-id" placeholder="my_app" /></label>
+      <label>Name<input id="f-name" placeholder="My App" /></label>
+      <label>Path (absolute)
+        <div class="path-row">
+          <input id="f-path" placeholder="/Users/mac/Coding/MyApp/server" />
+          <button type="button" class="btn" id="btn-browse">Browse</button>
+        </div>
+      </label>
+      <div id="dir-browser" class="hidden">
+        <div id="dir-current"></div>
+        <ul id="dir-list"></ul>
+      </div>
+      <label>Command<input id="f-command" value="node" /></label>
+      <label>Args (space-separated)<input id="f-args" placeholder="index.js" /></label>
+      <label>Port<input id="f-port" type="number" placeholder="3001" /></label>
+      <label class="checkbox-label">
+        <input id="f-autostart" type="checkbox" checked />
+        Auto-start on boot
+      </label>
+      <div class="modal-actions">
+        <button id="btn-cancel" class="btn">Cancel</button>
+        <button id="btn-save" class="btn btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

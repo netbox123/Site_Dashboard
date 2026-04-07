@@ -1,0 +1,7 @@
+node_modules/
+logs/
+frontend/node_modules/
+frontend/dist/
+.DS_Store
+*.plist
+websites.json
