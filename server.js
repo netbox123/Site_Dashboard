@@ -8,13 +8,15 @@ import path from 'path';
 import { createConnection } from 'net';
 import { createServer as createHttpServer } from 'http';
 import { WebSocketServer } from 'ws';
+import dgram from 'dgram';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const pty = require('node-pty');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WEBSITES_FILE = path.join(__dirname, 'config', 'websites.json');
-const PAGES_FILE    = path.join(__dirname, 'config', 'pages.json');
+const WEBSITES_FILE  = path.join(__dirname, 'config', 'websites.json');
+const PAGES_FILE     = path.join(__dirname, 'config', 'pages.json');
+const MACHINES_FILE  = path.join(__dirname, 'config', 'machines.json');
 const LOGS_DIR      = path.join(__dirname, 'logs');
 const DASHBOARD_PORT = 9000;
 const MAX_LOG_ENTRIES = 500;
@@ -134,12 +136,291 @@ async function getSiteStatus(site) {
 // In-memory process registry
 const runningProcesses = {};
 
+// ── GUI route ─────────────────────────────────────────────────────────────────
+
+app.get('/gui', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'gui.html'));
+});
+
+// ── Install routes ────────────────────────────────────────────────────────────
+
+app.get('/install', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'install.html'));
+});
+
+app.get('/api/install/agent.js', (_req, res) => {
+  res.setHeader('Content-Type', 'text/plain');
+  res.sendFile(path.join(__dirname, 'dashboard-agent', 'agent.js'));
+});
+
+app.get('/api/install/package.json', (_req, res) => {
+  res.setHeader('Content-Type', 'text/plain');
+  res.sendFile(path.join(__dirname, 'dashboard-agent', 'package.json'));
+});
+
+app.get('/api/install/mac', (req, res) => {
+  const dashboardUrl = `http://${req.hostname}:${DASHBOARD_PORT}`;
+  const nodeEnvPath = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin';
+  const script = `#!/bin/bash
+set -e
+
+DASHBOARD_URL="${dashboardUrl}"
+INSTALL_DIR="/usr/local/dashboard-agent"
+PLIST_PATH="/Library/LaunchDaemons/com.dashboard.agent.plist"
+NODE_BIN="$(which node 2>/dev/null || echo /usr/local/bin/node)"
+
+if [ "$EUID" -ne 0 ]; then
+  echo "Please run as root: curl -fsSL $\\{DASHBOARD_URL\\}/api/install/mac | sudo bash"
+  exit 1
+fi
+
+echo "→ Dashboard: $DASHBOARD_URL"
+echo "→ Node:      $NODE_BIN"
+echo "→ Installing to $INSTALL_DIR"
+mkdir -p "$INSTALL_DIR"
+
+echo "→ Downloading agent files"
+curl -fsSL "$DASHBOARD_URL/api/install/agent.js"      -o "$INSTALL_DIR/agent.js"
+curl -fsSL "$DASHBOARD_URL/api/install/package.json"  -o "$INSTALL_DIR/package.json"
+
+echo "→ Installing dependencies"
+cd "$INSTALL_DIR"
+npm install --production --silent
+
+echo "→ Writing launchd plist"
+cat > "$PLIST_PATH" << PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.dashboard.agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$NODE_BIN</string>
+    <string>$INSTALL_DIR/agent.js</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>$INSTALL_DIR</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>DASHBOARD_URL</key>
+    <string>$DASHBOARD_URL</string>
+    <key>PATH</key>
+    <string>${nodeEnvPath}</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/var/log/dashboard-agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/dashboard-agent-error.log</string>
+</dict>
+</plist>
+PLIST
+
+launchctl unload "$PLIST_PATH" 2>/dev/null || true
+echo "→ Loading service"
+launchctl load "$PLIST_PATH"
+
+echo ""
+echo "✓ Agent installed and started"
+echo "  Logs:  /var/log/dashboard-agent.log"
+echo "  Error: /var/log/dashboard-agent-error.log"
+echo ""
+echo "  To uninstall:"
+echo "    sudo launchctl unload $PLIST_PATH && sudo rm -rf $INSTALL_DIR $PLIST_PATH"
+`;
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(script);
+});
+
+app.get('/api/install/linux', (req, res) => {
+  const dashboardUrl = `http://${req.hostname}:${DASHBOARD_PORT}`;
+  const script = `#!/bin/bash
+set -e
+
+DASHBOARD_URL="${dashboardUrl}"
+INSTALL_DIR="/usr/local/dashboard-agent"
+SERVICE_PATH="/etc/systemd/system/dashboard-agent.service"
+
+if [ "$EUID" -ne 0 ]; then
+  echo "Please run as root: curl -fsSL $\\{DASHBOARD_URL\\}/api/install/linux | sudo bash"
+  exit 1
+fi
+
+# Install dependencies if not present
+if ! command -v ethtool &>/dev/null; then
+  apt-get install -y ethtool
+fi
+
+if ! command -v node &>/dev/null; then
+  echo "→ Node.js not found, installing via NodeSource"
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  apt-get install -y nodejs
+fi
+
+NODE_BIN="$(which node)"
+echo "→ Dashboard: $DASHBOARD_URL"
+echo "→ Node:      $NODE_BIN"
+echo "→ Installing to $INSTALL_DIR"
+mkdir -p "$INSTALL_DIR"
+
+echo "→ Downloading agent files"
+curl -fsSL "$DASHBOARD_URL/api/install/agent.js"     -o "$INSTALL_DIR/agent.js"
+curl -fsSL "$DASHBOARD_URL/api/install/package.json" -o "$INSTALL_DIR/package.json"
+
+echo "→ Installing dependencies"
+cd "$INSTALL_DIR"
+npm install --production --silent
+
+echo "→ Writing systemd service"
+cat > "$SERVICE_PATH" << SERVICE
+[Unit]
+Description=Dashboard Agent
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$NODE_BIN $INSTALL_DIR/agent.js
+Restart=always
+RestartSec=5
+Environment=DASHBOARD_URL=$DASHBOARD_URL
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+systemctl daemon-reload
+systemctl enable dashboard-agent
+systemctl restart dashboard-agent
+
+# Set up Wake on LAN — detect the active ethernet interface and enable WoL
+WOL_IFACE="$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)"
+if [ -n "$WOL_IFACE" ] && command -v ethtool &>/dev/null; then
+  echo "→ Enabling Wake on LAN on $WOL_IFACE"
+  ethtool -s "$WOL_IFACE" wol g 2>/dev/null || true
+  cat > /etc/systemd/system/wol.service << WOL
+[Unit]
+Description=Enable Wake on LAN on $WOL_IFACE
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/sbin/ethtool -s $WOL_IFACE wol g
+
+[Install]
+WantedBy=multi-user.target
+WOL
+  systemctl daemon-reload
+  systemctl enable wol.service
+  systemctl start wol.service
+else
+  echo "  ⚠ Could not auto-detect interface — enable WoL manually: sudo ethtool -s <iface> wol g"
+fi
+
+echo ""
+echo "✓ Agent installed and started"
+echo "  Status: systemctl status dashboard-agent"
+echo "  Logs:   journalctl -u dashboard-agent -f"
+echo ""
+echo "  To uninstall:"
+echo "    systemctl disable --now dashboard-agent && rm -rf $INSTALL_DIR $SERVICE_PATH"
+`;
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(script);
+});
+
 // ── Pages API ─────────────────────────────────────────────────────────────────
 
 app.get('/api/pages', (_req, res) => {
   try {
     res.json(JSON.parse(readFileSync(PAGES_FILE, 'utf8')));
   } catch { res.json([]); }
+});
+
+// ── Machines API ──────────────────────────────────────────────────────────────
+
+function loadMachines() {
+  try { return JSON.parse(readFileSync(MACHINES_FILE, 'utf8')); } catch { return []; }
+}
+
+function saveMachines(machines) {
+  writeFileSync(MACHINES_FILE, JSON.stringify(machines, null, 2));
+}
+
+function sendWoL(mac) {
+  const bytes = mac.replace(/[:-]/g, '').match(/.{2}/g).map(b => parseInt(b, 16));
+  const packet = Buffer.alloc(102);
+  packet.fill(0xff, 0, 6);
+  for (let i = 1; i <= 16; i++) bytes.forEach((b, j) => { packet[6 + (i - 1) * 6 + j] = b; });
+  return new Promise((resolve, reject) => {
+    const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    sock.once('listening', () => sock.setBroadcast(true));
+    sock.send(packet, 0, packet.length, 9, '255.255.255.255', err => {
+      sock.close();
+      err ? reject(err) : resolve();
+    });
+  });
+}
+
+app.get('/api/machines', (_req, res) => {
+  const machines = loadMachines();
+  const now = Date.now();
+  res.json(machines.map(m => ({
+    ...m,
+    online: m.last_seen ? (now - new Date(m.last_seen).getTime()) < 60000 : false,
+  })));
+});
+
+app.post('/api/machines/register', (req, res) => {
+  const { name, ip_address, mac, os: osName, agent_port } = req.body ?? {};
+  if (!name || !ip_address || !mac) return res.status(400).json({ error: 'name, ip_address and mac are required' });
+  const machines = loadMachines();
+  const last_seen = new Date().toISOString();
+  let machine = machines.find(m => m.mac === mac);
+  if (machine) {
+    Object.assign(machine, { name, ip_address, mac, os: osName, agent_port, last_seen });
+  } else {
+    const id = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    machine = { id, name, ip_address, mac, os: osName, agent_port, last_seen };
+    machines.push(machine);
+  }
+  saveMachines(machines);
+  console.log(`[Machines] Registered: ${name} (${ip_address})`);
+  res.json(machine);
+});
+
+app.post('/api/machines/:id/shutdown', async (req, res) => {
+  const machine = loadMachines().find(m => m.id === req.params.id);
+  if (!machine) return res.status(404).json({ error: 'Machine not found' });
+  if (!machine.ip_address || !machine.agent_port) return res.status(400).json({ error: 'No agent info for this machine' });
+  try {
+    const r = await fetch(`http://${machine.ip_address}:${machine.agent_port}/shutdown`, { method: 'POST' });
+    if (!r.ok) throw new Error(`Agent responded with ${r.status}`);
+    console.log(`[Machines] Shutdown sent to ${machine.name}`);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.post('/api/machines/:id/wake', async (req, res) => {
+  const machine = loadMachines().find(m => m.id === req.params.id);
+  if (!machine) return res.status(404).json({ error: 'Machine not found' });
+  if (!machine.mac) return res.status(400).json({ error: 'No MAC address stored for this machine' });
+  try {
+    await sendWoL(machine.mac);
+    console.log(`[Machines] WoL sent to ${machine.name} (${machine.mac})`);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Websites API ──────────────────────────────────────────────────────────────

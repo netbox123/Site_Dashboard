@@ -55,9 +55,9 @@
 
 <script setup>
 import { computed, ref, watch, nextTick } from 'vue';
-import { mdiViewDashboard, mdiWeb, mdiMonitor, mdiCog, mdiTextBox, mdiDocker, mdiServer, mdiDesktopTower } from '@mdi/js';
+import { mdiViewDashboard, mdiWeb, mdiMonitor, mdiCog, mdiTextBox, mdiDocker, mdiServer, mdiDesktopTower, mdiDesktopClassic } from '@mdi/js';
 
-const ICON_MAP = { mdiViewDashboard, mdiWeb, mdiMonitor, mdiCog, mdiTextBox, mdiDocker, mdiServer, mdiDesktopTower };
+const ICON_MAP = { mdiViewDashboard, mdiWeb, mdiMonitor, mdiCog, mdiTextBox, mdiDocker, mdiServer, mdiDesktopTower, mdiDesktopClassic };
 
 const props = defineProps({
   pages: { type: Array, default: () => [] },

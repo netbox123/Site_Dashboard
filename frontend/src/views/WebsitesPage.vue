@@ -40,7 +40,7 @@
         <div class="card-actions">
           <button v-if="!site.running" class="btn btn-start" @click="start(site.id)">▶ Start</button>
           <button v-else class="btn btn-stop" @click="stop(site.id)">■ Stop</button>
-          <a v-if="site.running" :href="`http://localhost:${site.port}`" target="_blank" class="btn btn-open">
+          <a v-if="site.running" :href="`http://${hostname}:${site.port}`" target="_blank" class="btn btn-open">
             <svg viewBox="0 0 24 24" fill="currentColor" class="btn-icon"><path :d="mdiOpenInNew" /></svg>
             Open
           </a>
@@ -177,6 +177,7 @@ import {
 } from '@mdi/js';
 
 // ── State ──────────────────────────────────────────────────────────────────────
+const hostname   = window.location.hostname;
 const sites      = ref([]);
 const logEntries = reactive({});
 const sseStreams  = {};

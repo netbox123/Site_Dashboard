@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GUI</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #000;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: #0f1117;
+      border: 1px solid #1e2330;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .card-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #64748b;
+      padding: 0.9rem 1.2rem;
+      border-bottom: 1px solid #1e2330;
+    }
+
+    .list {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .list-item {
+      display: flex;
+      align-items: center;
+      padding: 0.75rem 1.2rem;
+      border-bottom: 1px solid #1e2330;
+      gap: 0.75rem;
+    }
+
+    .list-item:last-child { border-bottom: none; }
+
+    .item-left {
+      display: flex;
+      align-items: baseline;
+      gap: 0.75rem;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .item-name {
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: #e2e8f0;
+    }
+
+    .item-meta {
+      font-size: 0.75rem;
+      color: #64748b;
+      font-family: monospace;
+    }
+
+    .btn-open {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      padding: 0.25rem 0.65rem;
+      border-radius: 5px;
+      border: 1px solid #1e3a5f;
+      background: transparent;
+      color: #3b82f6;
+      font-size: 0.75rem;
+      font-family: inherit;
+      cursor: pointer;
+      text-decoration: none;
+      white-space: nowrap;
+      transition: background 0.15s;
+      flex-shrink: 0;
+    }
+
+    .btn-open:hover { background: #1e3a5f55; }
+
+    .btn-open--disabled {
+      border-color: #1e2330;
+      color: #475569;
+      pointer-events: none;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .status-dot--running {
+      background: #22c55e;
+      box-shadow: 0 0 6px #22c55e88;
+      animation: pulse 1.5s infinite;
+    }
+
+    .status-dot--stopped { background: #475569; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .empty {
+      padding: 2rem;
+      text-align: center;
+      color: #475569;
+      font-size: 0.85rem;
+    }
+
+    .status-dot--online {
+      background: #22c55e;
+      box-shadow: 0 0 6px #22c55e88;
+      animation: pulse 1.5s infinite;
+    }
+
+    .status-dot--offline { background: #475569; }
+
+    .btn-action {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.2rem 0.55rem;
+      border-radius: 5px;
+      font-size: 0.72rem;
+      font-family: inherit;
+      cursor: pointer;
+      border: 1px solid;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+
+    .btn-shutdown {
+      border-color: #4a1515;
+      color: #f87171;
+      background: #2a0a0a;
+    }
+
+    .btn-shutdown:hover { background: #4a1515; }
+
+    .btn-wake {
+      border-color: #1e4a2a;
+      color: #4ade80;
+      background: #0a2a10;
+    }
+
+    .btn-wake:hover { background: #1e4a2a; }
+  </style>
+</head>
+<body>
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">Websites</div>
+      <div class="list" id="websites-list">
+        <div class="empty">Loading…</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Machines</div>
+      <div class="list" id="machines-list">
+        <div class="empty">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function loadWebsites() {
+      const el = document.getElementById('websites-list');
+      try {
+        const sites = await fetch('/api/websites').then(r => r.json());
+        if (!sites.length) { el.innerHTML = '<div class="empty">No websites configured.</div>'; return; }
+        el.innerHTML = sites.map(s => `
+          <div class="list-item">
+            <div class="item-left">
+              <div class="status-dot ${s.running ? 'status-dot--running' : 'status-dot--stopped'}"></div>
+              <span class="item-name">${s.name}</span>
+              <span class="item-meta">:${s.port}</span>
+            </div>
+            ${s.running
+              ? `<a class="btn-open" href="http://${location.hostname}:${s.port}" target="_blank">Open ↗</a>`
+              : `<span class="btn-open btn-open--disabled">Open ↗</span>`
+            }
+          </div>
+        `).join('');
+      } catch {
+        el.innerHTML = '<div class="empty">Failed to load.</div>';
+      }
+    }
+
+    async function loadMachines() {
+      const el = document.getElementById('machines-list');
+      try {
+        const machines = await fetch('/api/machines').then(r => r.json());
+        if (!machines.length) { el.innerHTML = '<div class="empty">No machines configured.</div>'; return; }
+        el.innerHTML = machines.map(m => `
+          <div class="list-item">
+            <div class="item-left">
+              <div class="status-dot ${m.online ? 'status-dot--online' : 'status-dot--offline'}"></div>
+              <span class="item-name">${m.name}</span>
+              <span class="item-meta">${m.ip_address}</span>
+            </div>
+            ${m.online
+              ? `<button class="btn-action btn-shutdown" onclick="machineAction('${m.id}','shutdown')">■ Shutdown</button>`
+              : m.mac
+                ? `<button class="btn-action btn-wake" onclick="machineAction('${m.id}','wake')">▶ Wake</button>`
+                : ''}
+          </div>
+        `).join('');
+      } catch {
+        el.innerHTML = '<div class="empty">Failed to load.</div>';
+      }
+    }
+
+    async function machineAction(id, action) {
+      await fetch(`/api/machines/${id}/${action}`, { method: 'POST' });
+      setTimeout(loadMachines, 1000);
+    }
+
+    loadWebsites();
+    loadMachines();
+    setInterval(loadWebsites, 5000);
+    setInterval(loadMachines, 10000);
+  </script>
+</body>
+</html>

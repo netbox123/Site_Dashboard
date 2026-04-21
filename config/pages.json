@@ -2,5 +2,6 @@
   { "slug": "websites",   "name": "Websites",   "icon": "mdiWeb",          "order": 1 },
   { "slug": "containers", "name": "Containers", "icon": "mdiDocker",       "order": 2 },
   { "slug": "caddy",      "name": "Caddy",      "icon": "mdiServer",       "order": 3 },
-  { "slug": "macmini",    "name": "Mac Mini",   "icon": "mdiDesktopTower", "order": 4 }
+  { "slug": "macmini",    "name": "Mac Mini",   "icon": "mdiDesktopTower", "order": 4 },
+  { "slug": "machines",   "name": "Machines",   "icon": "mdiDesktopClassic", "order": 5 }
 ]

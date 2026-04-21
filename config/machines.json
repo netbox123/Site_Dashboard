@@ -1,0 +1,20 @@
+[
+  {
+    "id": "macbookpro",
+    "name": "MacBookPro",
+    "ip_address": "192.168.0.30",
+    "mac": "8a:02:bd:53:ab:73",
+    "os": "macOS",
+    "agent_port": 9001,
+    "last_seen": "2026-04-21T11:44:56.503Z"
+  },
+  {
+    "id": "ubuntu-system",
+    "name": "ubuntu-System",
+    "ip_address": "192.168.0.13",
+    "mac": "a0:36:bc:d0:08:88",
+    "os": "Ubuntu Resolute Raccoon (development branch)",
+    "agent_port": 9001,
+    "last_seen": "2026-04-21T11:45:12.606Z"
+  }
+]

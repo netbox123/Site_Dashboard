@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Install Agent</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #000;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #94a3b8;
+      margin-bottom: 1.5rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: #0f1117;
+      border: 1px solid #1e2330;
+      border-radius: 12px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.9rem 1.2rem;
+      border-bottom: 1px solid #1e2330;
+    }
+
+    .card-icon { font-size: 1rem; }
+
+    .card-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #e2e8f0;
+    }
+
+    .card-body {
+      padding: 1.2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .section-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #475569;
+      margin-bottom: 0.4rem;
+    }
+
+    .oneliner-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: #060810;
+      border: 1px solid #1e2330;
+      border-radius: 7px;
+      padding: 0.6rem 0.8rem;
+    }
+
+    .oneliner-row input {
+      flex: 1;
+      font-family: 'SF Mono', 'Fira Mono', monospace;
+      font-size: 0.78rem;
+      color: #7dd3fc;
+      background: transparent;
+      border: none;
+      outline: none;
+      cursor: text;
+      min-width: 0;
+    }
+
+    .btn-copy {
+      flex-shrink: 0;
+      padding: 0.25rem 0.65rem;
+      border-radius: 5px;
+      border: 1px solid #1e3a5f;
+      background: transparent;
+      color: #3b82f6;
+      font-size: 0.72rem;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+
+    .btn-copy:hover { background: #1e3a5f55; }
+    .btn-copy.copied { color: #4ade80; border-color: #1e4a2a; }
+
+    .script-block {
+      background: #060810;
+      border: 1px solid #1e2330;
+      border-radius: 7px;
+      overflow: hidden;
+    }
+
+    .script-block-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.4rem 0.8rem;
+      border-bottom: 1px solid #1e2330;
+    }
+
+    .script-block-title {
+      font-size: 0.7rem;
+      color: #475569;
+    }
+
+    pre {
+      padding: 0.8rem;
+      font-family: 'SF Mono', 'Fira Mono', monospace;
+      font-size: 0.72rem;
+      line-height: 1.6;
+      color: #94a3b8;
+      overflow-x: auto;
+      max-height: 420px;
+      overflow-y: auto;
+      white-space: pre;
+    }
+
+    .note {
+      display: flex;
+      gap: 0.5rem;
+      background: #0f1a2e;
+      border: 1px solid #1e3a5f;
+      border-radius: 7px;
+      padding: 0.75rem 0.9rem;
+      font-size: 0.78rem;
+      color: #94a3b8;
+      line-height: 1.5;
+    }
+
+    .note-icon { flex-shrink: 0; }
+    .note strong { color: #e2e8f0; }
+
+    .coming-soon {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 1rem;
+      gap: 0.5rem;
+      color: #334155;
+    }
+
+    .coming-soon-icon { font-size: 2rem; }
+
+    .coming-soon-text {
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: #475569;
+    }
+  </style>
+</head>
+<body>
+  <h1>Install Dashboard Agent</h1>
+
+  <div class="grid">
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-icon">🍎</span>
+        <span class="card-title">macOS</span>
+      </div>
+      <div class="card-body">
+        <div>
+          <div class="section-label">One-liner install</div>
+          <div class="oneliner-row">
+            <input id="oneliner" type="text" readonly onclick="this.select()" />
+            <button class="btn-copy" onclick="copy('oneliner', this)">Copy</button>
+          </div>
+        </div>
+        <div>
+          <div class="section-label">Script preview</div>
+          <div class="script-block">
+            <div class="script-block-header">
+              <span class="script-block-title">install-mac.sh</span>
+              <button class="btn-copy" onclick="copy('mac-script', this)">Copy</button>
+            </div>
+            <pre id="mac-script">Loading…</pre>
+          </div>
+        </div>
+        <div class="note">
+          <span class="note-icon">💡</span>
+          <span>To enable Wake on LAN: <strong>System Settings → General → Sharing</strong> → scroll down → enable <strong>"Wake for network access"</strong>.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-icon">🐧</span>
+        <span class="card-title">Linux (Ubuntu / Debian)</span>
+      </div>
+      <div class="card-body">
+        <div>
+          <div class="section-label">One-liner install</div>
+          <div class="oneliner-row">
+            <input id="oneliner-linux" type="text" readonly onclick="this.select()" />
+            <button class="btn-copy" onclick="copy('oneliner-linux', this)">Copy</button>
+          </div>
+        </div>
+        <div>
+          <div class="section-label">Script preview</div>
+          <div class="script-block">
+            <div class="script-block-header">
+              <span class="script-block-title">install-linux.sh</span>
+              <button class="btn-copy" onclick="copy('linux-script', this)">Copy</button>
+            </div>
+            <pre id="linux-script">Loading…</pre>
+          </div>
+        </div>
+        <div class="note">
+          <span class="note-icon">💡</span>
+          <span>Node.js will be installed automatically if not present.</span>
+        </div>
+        <div class="note">
+          <span class="note-icon">⚡</span>
+          <div>
+            <strong>Wake on LAN — two steps required:</strong><br><br>
+            <strong>1. Enable in BIOS/UEFI:</strong> Advanced → APM Configuration → <strong>Power On By PCI-E: Enabled</strong> and <strong>ErP Ready: Disabled</strong>.<br><br>
+            <strong>2. Enable on the NIC</strong> (run while machine is online, replace <code>eno1</code> with your interface):<br>
+            <code>ip link show</code> — to find your interface name<br>
+            <code>sudo ethtool -s eno1 wol g</code> — to enable WoL<br><br>
+            To make it persist across reboots:<br>
+            <code>sudo systemctl enable wol.service</code> after the agent install creates it automatically.
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const origin = location.origin;
+
+    document.getElementById('oneliner').value = `curl -fsSL ${origin}/api/install/mac | sudo bash`;
+    document.getElementById('oneliner-linux').value = `curl -fsSL ${origin}/api/install/linux | sudo bash`;
+
+    fetch('/api/install/mac')
+      .then(r => r.text())
+      .then(text => { document.getElementById('mac-script').textContent = text; })
+      .catch(() => { document.getElementById('mac-script').textContent = 'Failed to load script.'; });
+
+    fetch('/api/install/linux')
+      .then(r => r.text())
+      .then(text => { document.getElementById('linux-script').textContent = text; })
+      .catch(() => { document.getElementById('linux-script').textContent = 'Failed to load script.'; });
+
+    function copy(id, btn) {
+      const el = document.getElementById(id);
+      const text = el.value !== undefined ? el.value : el.textContent;
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+    }
+  </script>
+</body>
+</html>
