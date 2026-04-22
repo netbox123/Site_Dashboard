@@ -21,6 +21,17 @@
         </svg>
         <span>{{ page.name }}</span>
       </button>
+
+      <div class="nav-divider"></div>
+
+      <a href="/gui" class="nav-item nav-item--link">
+        <svg viewBox="0 0 24 24" fill="currentColor" class="nav-icon"><path :d="mdiMonitorDashboard" /></svg>
+        <span>GUI</span>
+      </a>
+      <a href="/install" class="nav-item nav-item--link">
+        <svg viewBox="0 0 24 24" fill="currentColor" class="nav-icon"><path :d="mdiDownload" /></svg>
+        <span>Install</span>
+      </a>
     </nav>
 
     <!-- Dashboard Log Overlay -->
@@ -55,7 +66,7 @@
 
 <script setup>
 import { computed, ref, watch, nextTick } from 'vue';
-import { mdiViewDashboard, mdiWeb, mdiMonitor, mdiCog, mdiTextBox, mdiDocker, mdiServer, mdiDesktopTower, mdiDesktopClassic } from '@mdi/js';
+import { mdiViewDashboard, mdiWeb, mdiMonitor, mdiCog, mdiTextBox, mdiDocker, mdiServer, mdiDesktopTower, mdiDesktopClassic, mdiMonitorDashboard, mdiDownload } from '@mdi/js';
 
 const ICON_MAP = { mdiViewDashboard, mdiWeb, mdiMonitor, mdiCog, mdiTextBox, mdiDocker, mdiServer, mdiDesktopTower, mdiDesktopClassic };
 
@@ -216,6 +227,15 @@ function saveLog() {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
+}
+
+.nav-divider {
+  margin: 0.5rem 1rem;
+  border-top: 1px dotted var(--border);
+}
+
+.nav-item--link {
+  text-decoration: none;
 }
 
 /* ── Log overlay ─────────────────────────────────────────────────────────── */

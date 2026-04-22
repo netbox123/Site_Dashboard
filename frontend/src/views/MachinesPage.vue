@@ -20,31 +20,33 @@
           <div class="meta-row">
             <svg viewBox="0 0 24 24" fill="currentColor" class="meta-icon"><path :d="mdiIp" /></svg>
             <span>{{ machine.ip_address }}</span>
+            <span class="conn-icons">
+              <svg v-if="machine.connection_types?.includes('wifi')" viewBox="0 0 24 24" fill="currentColor" class="conn-icon conn-icon--wifi" title="WiFi"><path :d="mdiWifi" /></svg>
+              <svg v-if="machine.connection_types?.includes('ethernet')" viewBox="0 0 24 24" fill="currentColor" class="conn-icon conn-icon--eth" title="Ethernet"><path :d="mdiEthernet" /></svg>
+            </span>
           </div>
           <div class="meta-row">
             <svg viewBox="0 0 24 24" fill="currentColor" class="meta-icon"><path :d="mdiMonitor" /></svg>
             <span>{{ machine.os }}</span>
           </div>
           <div v-if="machine.mac" class="meta-row">
-            <svg viewBox="0 0 24 24" fill="currentColor" class="meta-icon"><path :d="mdiEthernet" /></svg>
+            <svg viewBox="0 0 24 24" fill="currentColor" class="meta-icon" style="opacity:0.4"><path :d="mdiEthernet" /></svg>
             <span class="meta-mac">{{ machine.mac }}</span>
           </div>
         </div>
 
         <div class="card-actions">
-          <button
-            v-if="machine.online"
-            class="btn btn-stop"
-            :disabled="busy.has(machine.id)"
-            @click="shutdown(machine)"
-          >■ Shutdown</button>
-          <button
-            v-if="!machine.online && machine.mac"
-            class="btn btn-start"
-            :disabled="busy.has(machine.id)"
-            @click="wake(machine)"
-          >▶ Wake</button>
-          <span v-if="!machine.online && !machine.mac" class="no-action">No MAC — can't wake</span>
+          <template v-if="pending.get(machine.id) === 'shutdown'">
+            <span class="pending-label"><span class="spinner"></span>Shutdown in progress...</span>
+          </template>
+          <template v-else-if="pending.get(machine.id) === 'wake'">
+            <span class="pending-label"><span class="spinner"></span>Wake up in progress...</span>
+          </template>
+          <template v-else>
+            <button v-if="machine.online" class="btn btn-stop" @click="shutdown(machine)">■ Shutdown</button>
+            <button v-if="!machine.online && machine.mac" class="btn btn-start" @click="wake(machine)">▶ Wake</button>
+            <span v-if="!machine.online && !machine.mac" class="no-action">No MAC — can't wake</span>
+          </template>
         </div>
       </div>
 
@@ -55,28 +57,42 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue';
-import { mdiIp, mdiMonitor, mdiEthernet } from '@mdi/js';
+import { mdiIp, mdiMonitor, mdiEthernet, mdiWifi } from '@mdi/js';
 
 const machines = ref([]);
-const busy = ref(new Set());
+const pending = ref(new Map());
 let pollTimer = null;
+let fastPollTimer = null;
 
 async function fetchMachines() {
   const res = await fetch('/api/machines');
-  machines.value = await res.json();
+  const data = await res.json();
+  // Clear pending for machines that have reached the expected state
+  const p = new Map(pending.value);
+  for (const m of data) {
+    if (p.get(m.id) === 'shutdown' && !m.online) p.delete(m.id);
+    if (p.get(m.id) === 'wake'     &&  m.online) p.delete(m.id);
+  }
+  pending.value = p;
+  machines.value = data;
+  if (!p.size && fastPollTimer) { clearInterval(fastPollTimer); fastPollTimer = null; }
+}
+
+function startFastPoll() {
+  if (fastPollTimer) clearInterval(fastPollTimer);
+  fastPollTimer = setInterval(fetchMachines, 2000);
 }
 
 async function shutdown(machine) {
-  const s = new Set(busy.value); s.add(machine.id); busy.value = s;
-  try { await fetch(`/api/machines/${machine.id}/shutdown`, { method: 'POST' }); }
-  finally { const s2 = new Set(busy.value); s2.delete(machine.id); busy.value = s2; }
-  await fetchMachines();
+  const p = new Map(pending.value); p.set(machine.id, 'shutdown'); pending.value = p;
+  await fetch(`/api/machines/${machine.id}/shutdown`, { method: 'POST' });
+  startFastPoll();
 }
 
 async function wake(machine) {
-  const s = new Set(busy.value); s.add(machine.id); busy.value = s;
-  try { await fetch(`/api/machines/${machine.id}/wake`, { method: 'POST' }); }
-  finally { const s2 = new Set(busy.value); s2.delete(machine.id); busy.value = s2; }
+  const p = new Map(pending.value); p.set(machine.id, 'wake'); pending.value = p;
+  await fetch(`/api/machines/${machine.id}/wake`, { method: 'POST' });
+  startFastPoll();
 }
 
 onMounted(() => {
@@ -84,7 +100,7 @@ onMounted(() => {
   pollTimer = setInterval(fetchMachines, 10000);
 });
 
-onUnmounted(() => clearInterval(pollTimer));
+onUnmounted(() => { clearInterval(pollTimer); if (fastPollTimer) clearInterval(fastPollTimer); });
 </script>
 
 <style scoped>
@@ -184,6 +200,12 @@ onUnmounted(() => clearInterval(pollTimer));
 
 .meta-icon { width: 13px; height: 13px; flex-shrink: 0; opacity: 0.6; }
 
+.conn-icons { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; }
+
+.conn-icon { width: 13px; height: 13px; }
+.conn-icon--wifi { color: var(--accent-blue); }
+.conn-icon--eth  { color: var(--accent-green); }
+
 .meta-mac { font-family: monospace; font-size: 0.72rem; }
 
 .card-actions { display: flex; align-items: center; gap: 0.5rem; }
@@ -213,6 +235,26 @@ onUnmounted(() => clearInterval(pollTimer));
 .btn-stop:hover:not(:disabled) { background: #4a1515; }
 
 .no-action { font-size: 0.75rem; color: var(--text-muted); }
+
+.pending-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.spinner {
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--border);
+  border-top-color: var(--text-secondary);
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
 
 .empty {
   grid-column: 1 / -1;

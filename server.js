@@ -300,28 +300,39 @@ systemctl daemon-reload
 systemctl enable dashboard-agent
 systemctl restart dashboard-agent
 
-# Set up Wake on LAN — detect the active ethernet interface and enable WoL
+# Set up Wake on LAN — configure via NetworkManager so it survives interface restarts
 WOL_IFACE="$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)"
-if [ -n "$WOL_IFACE" ] && command -v ethtool &>/dev/null; then
+if [ -n "$WOL_IFACE" ]; then
   echo "→ Enabling Wake on LAN on $WOL_IFACE"
+  # Apply immediately
   ethtool -s "$WOL_IFACE" wol g 2>/dev/null || true
-  cat > /etc/systemd/system/wol.service << WOL
+  # Persist via NetworkManager (survives interface restarts and reboots)
+  NM_CONN="$(nmcli -g NAME,DEVICE connection show --active 2>/dev/null | grep ":${WOL_IFACE}$" | cut -d: -f1)"
+  if [ -n "$NM_CONN" ]; then
+    nmcli connection modify "$NM_CONN" 802-3-ethernet.wake-on-lan magic
+    echo "  ✓ WoL persisted via NetworkManager connection: $NM_CONN"
+  else
+    # Fallback: systemd oneshot service (runs after NetworkManager brings up the interface)
+    ETHTOOL_BIN="$(which ethtool)"
+    cat > /etc/systemd/system/wol.service << WOL
 [Unit]
 Description=Enable Wake on LAN on $WOL_IFACE
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/sbin/ethtool -s $WOL_IFACE wol g
+ExecStart=$ETHTOOL_BIN -s $WOL_IFACE wol g
 
 [Install]
 WantedBy=multi-user.target
 WOL
-  systemctl daemon-reload
-  systemctl enable wol.service
-  systemctl start wol.service
+    systemctl daemon-reload
+    systemctl enable --now wol.service
+    echo "  ✓ WoL enabled via systemd service (NetworkManager not found)"
+  fi
 else
-  echo "  ⚠ Could not auto-detect interface — enable WoL manually: sudo ethtool -s <iface> wol g"
+  echo "  ⚠ Could not auto-detect interface — enable WoL manually: sudo nmcli connection modify <conn> 802-3-ethernet.wake-on-lan magic"
 fi
 
 echo ""
@@ -346,6 +357,12 @@ app.get('/api/pages', (_req, res) => {
 
 // ── Machines API ──────────────────────────────────────────────────────────────
 
+// Tracks machines that have been told to shut down (id → timestamp).
+// Ignores heartbeats within 45s of shutdown to prevent stale heartbeats
+// from reinstating the machine as online. Cleared once a heartbeat arrives
+// after the 45s window (genuine reboot).
+const shutdownTimes = new Map();
+
 function loadMachines() {
   try { return JSON.parse(readFileSync(MACHINES_FILE, 'utf8')); } catch { return []; }
 }
@@ -361,10 +378,12 @@ function sendWoL(mac) {
   for (let i = 1; i <= 16; i++) bytes.forEach((b, j) => { packet[6 + (i - 1) * 6 + j] = b; });
   return new Promise((resolve, reject) => {
     const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-    sock.once('listening', () => sock.setBroadcast(true));
-    sock.send(packet, 0, packet.length, 9, '255.255.255.255', err => {
-      sock.close();
-      err ? reject(err) : resolve();
+    sock.bind(0, () => {
+      sock.setBroadcast(true);
+      sock.send(packet, 0, packet.length, 9, '255.255.255.255', err => {
+        sock.close();
+        err ? reject(err) : resolve();
+      });
     });
   });
 }
@@ -374,22 +393,50 @@ app.get('/api/machines', (_req, res) => {
   const now = Date.now();
   res.json(machines.map(m => ({
     ...m,
-    online: m.last_seen ? (now - new Date(m.last_seen).getTime()) < 60000 : false,
+    online: !shutdownTimes.has(m.id) && (m.last_seen ? (now - new Date(m.last_seen).getTime()) < 60000 : false),
   })));
 });
 
 app.post('/api/machines/register', (req, res) => {
-  const { name, ip_address, mac, os: osName, agent_port } = req.body ?? {};
-  if (!name || !ip_address || !mac) return res.status(400).json({ error: 'name, ip_address and mac are required' });
+  const { name, ip_address, mac, os: osName, agent_port, connection_types } = req.body ?? {};
+  if (!name || !ip_address) return res.status(400).json({ error: 'name and ip_address are required' });
   const machines = loadMachines();
   const last_seen = new Date().toISOString();
-  let machine = machines.find(m => m.mac === mac);
+
+  const isPermanentMac = (m) => {
+    if (!m) return false;
+    const firstByte = parseInt(m.split(':')[0], 16);
+    return (firstByte & 0x02) === 0;
+  };
+
+  // Match by permanent MAC first (stable across hostname changes), then fall back to hostname slug
+  let machine = null;
+  if (mac && isPermanentMac(mac)) {
+    machine = machines.find(m => m.mac === mac);
+  }
+  if (!machine) {
+    const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    machine = machines.find(m => m.id === slug);
+  }
+
   if (machine) {
-    Object.assign(machine, { name, ip_address, mac, os: osName, agent_port, last_seen });
+    machine.name             = name;
+    machine.ip_address       = ip_address;
+    machine.os               = osName;
+    machine.agent_port       = agent_port;
+    machine.last_seen        = last_seen;
+    if (mac && isPermanentMac(mac)) machine.mac = mac;
+    if (connection_types)    machine.connection_types = connection_types;
   } else {
     const id = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-    machine = { id, name, ip_address, mac, os: osName, agent_port, last_seen };
+    machine = { id, name, ip_address, mac, os: osName, agent_port, connection_types, last_seen };
     machines.push(machine);
+  }
+  const shutdownTime = shutdownTimes.get(machine.id);
+  if (shutdownTime) {
+    // Within 45s: stale heartbeat from before shutdown — keep machine offline
+    // After 45s: genuine reboot — clear and show online
+    if (Date.now() - shutdownTime >= 45000) shutdownTimes.delete(machine.id);
   }
   saveMachines(machines);
   console.log(`[Machines] Registered: ${name} (${ip_address})`);
@@ -400,12 +447,17 @@ app.post('/api/machines/:id/shutdown', async (req, res) => {
   const machine = loadMachines().find(m => m.id === req.params.id);
   if (!machine) return res.status(404).json({ error: 'Machine not found' });
   if (!machine.ip_address || !machine.agent_port) return res.status(400).json({ error: 'No agent info for this machine' });
+  shutdownTimes.set(machine.id, Date.now()); // Mark offline immediately
   try {
-    const r = await fetch(`http://${machine.ip_address}:${machine.agent_port}/shutdown`, { method: 'POST' });
+    const r = await fetch(`http://${machine.ip_address}:${machine.agent_port}/shutdown`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(5000),
+    });
     if (!r.ok) throw new Error(`Agent responded with ${r.status}`);
     console.log(`[Machines] Shutdown sent to ${machine.name}`);
     res.json({ ok: true });
   } catch (err) {
+    shutdownTimes.delete(machine.id); // Revert — couldn't reach agent
     res.status(502).json({ error: err.message });
   }
 });
@@ -421,6 +473,16 @@ app.post('/api/machines/:id/wake', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+app.delete('/api/machines/:id', (req, res) => {
+  const machines = loadMachines();
+  const idx = machines.findIndex(m => m.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Machine not found' });
+  const [removed] = machines.splice(idx, 1);
+  saveMachines(machines);
+  console.log(`[Machines] Deleted: ${removed.name}`);
+  res.json({ ok: true });
 });
 
 // ── Websites API ──────────────────────────────────────────────────────────────

@@ -136,10 +136,17 @@
 
     .status-dot--offline { background: #475569; }
 
+    .conn-icons { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; margin-right: 0.5rem; }
+    .conn-icon { width: 13px; height: 13px; flex-shrink: 0; }
+    .conn-icon--wifi { color: #60a5fa; }
+    .conn-icon--eth  { color: #4ade80; }
+
     .btn-action {
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       padding: 0.2rem 0.55rem;
+      min-width: 5.5rem;
       border-radius: 5px;
       font-size: 0.72rem;
       font-family: inherit;
@@ -165,6 +172,27 @@
     }
 
     .btn-wake:hover { background: #1e4a2a; }
+
+    .pending-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.72rem;
+      color: #94a3b8;
+      min-width: 5.5rem;
+    }
+
+    .spinner {
+      width: 10px;
+      height: 10px;
+      border: 2px solid #475569;
+      border-top-color: #94a3b8;
+      border-radius: 50%;
+      flex-shrink: 0;
+      animation: spin 0.7s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -208,33 +236,70 @@
       }
     }
 
-    async function loadMachines() {
+    const WIFI_PATH = 'M1,9L3,11C7.97,6.03 16.03,6.03 21,11L23,9C16.93,2.93 7.08,2.93 1,9M9,17L12,20L15,17C13.35,15.36 10.66,15.36 9,17M5,13L7,15C9.76,12.24 14.24,12.24 17,15L19,13C15.14,9.14 8.87,9.14 5,13Z';
+    const ETH_PATH  = 'M7,15H2V9H7V7L12,5L17,7V9H22V15H17V17L12,19L7,17V15M4,13H5V11H4V13M9,13H10V11H9V13M14,13H15V11H14V13M19,13H20V11H19V13Z';
+
+    const pendingActions = {};
+    let lastMachines = [];
+    let fastPollTimer = null;
+
+    function renderMachines() {
       const el = document.getElementById('machines-list');
-      try {
-        const machines = await fetch('/api/machines').then(r => r.json());
-        if (!machines.length) { el.innerHTML = '<div class="empty">No machines configured.</div>'; return; }
-        el.innerHTML = machines.map(m => `
-          <div class="list-item">
-            <div class="item-left">
-              <div class="status-dot ${m.online ? 'status-dot--online' : 'status-dot--offline'}"></div>
-              <span class="item-name">${m.name}</span>
-              <span class="item-meta">${m.ip_address}</span>
-            </div>
-            ${m.online
-              ? `<button class="btn-action btn-shutdown" onclick="machineAction('${m.id}','shutdown')">■ Shutdown</button>`
-              : m.mac
-                ? `<button class="btn-action btn-wake" onclick="machineAction('${m.id}','wake')">▶ Wake</button>`
-                : ''}
+      if (!lastMachines.length) { el.innerHTML = '<div class="empty">No machines configured.</div>'; return; }
+      el.innerHTML = lastMachines.map(m => {
+        const types = m.connection_types || [];
+        const connIcons = types.length ? `
+          <span class="conn-icons">
+            ${types.includes('wifi')     ? `<svg class="conn-icon conn-icon--wifi" viewBox="0 0 24 24" fill="currentColor"><path d="${WIFI_PATH}"/></svg>` : ''}
+            ${types.includes('ethernet') ? `<svg class="conn-icon conn-icon--eth"  viewBox="0 0 24 24" fill="currentColor"><path d="${ETH_PATH}"/></svg>`  : ''}
+          </span>` : '';
+
+        // Clear pending if action has completed
+        if (pendingActions[m.id] === 'shutdown' && !m.online) delete pendingActions[m.id];
+        if (pendingActions[m.id] === 'wake'     &&  m.online) delete pendingActions[m.id];
+
+        let btn;
+        if (pendingActions[m.id] === 'shutdown') {
+          btn = `<span class="pending-label"><span class="spinner"></span>Shutdown in progress...</span>`;
+        } else if (pendingActions[m.id] === 'wake') {
+          btn = `<span class="pending-label"><span class="spinner"></span>Wake up in progress...</span>`;
+        } else if (m.online) {
+          btn = `<button class="btn-action btn-shutdown" onclick="machineAction('${m.id}','shutdown')">■ Shutdown</button>`;
+        } else if (m.mac) {
+          btn = `<button class="btn-action btn-wake" onclick="machineAction('${m.id}','wake')">▶ Wake</button>`;
+        } else {
+          btn = '';
+        }
+
+        return `
+        <div class="list-item">
+          <div class="item-left">
+            <div class="status-dot ${m.online ? 'status-dot--online' : 'status-dot--offline'}"></div>
+            <span class="item-name">${m.name}</span>
+            <span class="item-meta">${m.ip_address}</span>
           </div>
-        `).join('');
-      } catch {
-        el.innerHTML = '<div class="empty">Failed to load.</div>';
-      }
+          ${connIcons}${btn}
+        </div>`;
+      }).join('');
+    }
+
+    async function loadMachines() {
+      try {
+        lastMachines = await fetch('/api/machines').then(r => r.json());
+        renderMachines();
+        if (!Object.keys(pendingActions).length && fastPollTimer) {
+          clearInterval(fastPollTimer);
+          fastPollTimer = null;
+        }
+      } catch { /* ignore */ }
     }
 
     async function machineAction(id, action) {
+      pendingActions[id] = action;
+      renderMachines();
       await fetch(`/api/machines/${id}/${action}`, { method: 'POST' });
-      setTimeout(loadMachines, 1000);
+      if (fastPollTimer) clearInterval(fastPollTimer);
+      fastPollTimer = setInterval(loadMachines, 2000);
     }
 
     loadWebsites();
