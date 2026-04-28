@@ -31,3 +31,10 @@ body {
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+@media print {
+  .sidebar        { display: none !important; }
+  .app-layout     { display: block !important; height: auto !important; overflow: visible !important; }
+  .app-main       { overflow: visible !important; }
+  .no-print       { display: none !important; }
+}

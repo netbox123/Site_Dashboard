@@ -5,3 +5,15 @@ frontend/dist/
 .DS_Store
 *.plist
 websites.json
+
+# Sensitive config — use *.example.json as templates
+config/mqtt.json
+config/unifi.json
+config/lg_keys.json
+config/clientIPlist.json
+config/tvs.json
+config/machines.json
+
+# Screenshots
+Screenshot*
+*.png

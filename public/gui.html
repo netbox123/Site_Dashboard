@@ -17,7 +17,7 @@
 
     .grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(2, 1fr);
       gap: 1.5rem;
       max-width: 1400px;
       margin: 0 auto;
@@ -134,7 +134,8 @@
       animation: pulse 1.5s infinite;
     }
 
-    .status-dot--offline { background: #475569; }
+    .status-dot--offline  { background: #475569; }
+    .status-dot--checking { background: #334155; }
 
     .conn-icons { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; margin-right: 0.5rem; }
     .conn-icon { width: 13px; height: 13px; flex-shrink: 0; }
@@ -173,6 +174,14 @@
 
     .btn-wake:hover { background: #1e4a2a; }
 
+    .btn-poweroff {
+      border-color: #4a2a00;
+      color: #fb923c;
+      background: #2a1500;
+    }
+
+    .btn-poweroff:hover { background: #4a2a00; }
+
     .pending-label {
       display: inline-flex;
       align-items: center;
@@ -193,6 +202,135 @@
     }
 
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Remote overlay ─────────────────────────────────────────────────────── */
+    .remote-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.80);
+      backdrop-filter: blur(4px);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .remote-overlay.open { display: flex; }
+
+    .remote-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.6rem;
+      max-height: 95vh;
+      overflow-y: auto;
+      padding: 1rem;
+      scrollbar-width: none;
+    }
+    .remote-wrap::-webkit-scrollbar { display: none; }
+
+    .remote-header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      color: #94a3b8;
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    .remote-close-btn {
+      background: none;
+      border: 1px solid #1e2330;
+      color: #64748b;
+      font-size: 0.85rem;
+      cursor: pointer;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      line-height: 1;
+    }
+    .remote-close-btn:hover { color: #e2e8f0; background: #1e2330; }
+
+    .remote-shell {
+      width: 216px;
+      background: #18181c;
+      border-radius: 28px 28px 22px 22px;
+      padding: 16px 16px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.06),
+        inset 0 -2px 0 rgba(0,0,0,0.5),
+        0 24px 64px rgba(0,0,0,0.9),
+        0 0 0 1px #2a2a32;
+    }
+
+    .rkey {
+      background: #252528;
+      border: 1px solid #38383e;
+      border-bottom: 2px solid #111;
+      border-radius: 8px;
+      color: #bbb;
+      font-size: 0.8rem;
+      font-family: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      height: 34px;
+      width: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      user-select: none;
+      transition: background 0.08s, color 0.08s;
+      box-sizing: border-box;
+    }
+    .rkey:hover  { background: #2e2e34; color: #ddd; }
+    .rkey:active { background: #1a1a1e; border-bottom-width: 1px; transform: translateY(1px); color: #fff; }
+
+    .r-brand { text-align: center; font-size: 0.58rem; font-weight: 700; letter-spacing: 0.3em; color: #3a3a48; margin-bottom: -4px; }
+    .r-center { display: flex; justify-content: center; }
+
+    .rkey--power { width: 44px; height: 44px; border-radius: 50%; background: #2a1015; border-color: #5c1a24; border-bottom-color: #1a080c; color: #e05060; font-size: 1.1rem; }
+    .rkey--power:hover { background: #3a1520; color: #ff6070; }
+
+    .r-row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .r-row3 .rkey { width: 100%; }
+
+    .r-divider { height: 1px; background: linear-gradient(to right, transparent, #2e2e3a, transparent); margin: -1px 0; }
+
+    .rkey--fn { font-size: 0.58rem; letter-spacing: 0.04em; font-weight: 700; color: #999; }
+    .rkey--home { font-size: 1.1rem; height: 46px; color: #ccc; }
+
+    .r-sidepair { display: flex; justify-content: space-between; align-items: center; }
+
+    .r-volch { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .r-vcol  { display: flex; flex-direction: column; gap: 6px; }
+    .rkey--mute { height: 74px; border-radius: 10px; font-size: 1rem; }
+
+    .r-dpad { display: grid; grid-template-columns: repeat(3, 44px); gap: 4px; justify-content: center; align-items: center; }
+    .r-dpad span { display: block; height: 34px; }
+    .r-arrow { height: 34px; font-size: 0.65rem; }
+
+    .r-ok { width: 44px; height: 44px; border-radius: 50%; background: #1c2638; border-color: #2a5090; border-bottom-color: #0e1830; color: #5090d0; font-weight: 700; font-size: 0.72rem; }
+    .r-ok:hover { background: #223348; color: #60a8e8; }
+
+    .r-colors { display: flex; justify-content: space-around; align-items: center; }
+    .rkey--red    { width: 34px; height: 16px; border-radius: 8px; background: #7a1515; border-color: #9a2020; border-bottom-color: #4a0c0c; font-size: 0; }
+    .rkey--green  { width: 34px; height: 16px; border-radius: 8px; background: #156015; border-color: #207820; border-bottom-color: #0c3a0c; font-size: 0; }
+    .rkey--yellow { width: 34px; height: 16px; border-radius: 8px; background: #706010; border-color: #887818; border-bottom-color: #403808; font-size: 0; }
+    .rkey--blue   { width: 34px; height: 16px; border-radius: 8px; background: #151578; border-color: #201898; border-bottom-color: #0c0c48; font-size: 0; }
+    .rkey--red:hover    { background: #9a1e1e; }
+    .rkey--green:hover  { background: #1e781e; }
+    .rkey--yellow:hover { background: #887818; }
+    .rkey--blue:hover   { background: #201898; }
+
+    .r-numpad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .r-numpad .rkey { width: 100%; }
+
+    .btn-remote { border-color: #1e3a5f; color: #3b82f6; background: #0a1a30; }
+    .btn-remote:hover { background: #1e3a5f; }
   </style>
 </head>
 <body>
@@ -208,6 +346,109 @@
       <div class="card-title">Machines</div>
       <div class="list" id="machines-list">
         <div class="empty">Loading…</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">TVs</div>
+      <div class="list" id="tvs-list">
+        <div class="empty">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Philips Remote modal ──────────────────────────────────────────────── -->
+  <div class="remote-overlay" id="remote-overlay" onclick="if(event.target===this)closeRemote()">
+    <div class="remote-wrap">
+      <div class="remote-header">
+        <span id="remote-tv-name"></span>
+        <button class="remote-close-btn" onclick="closeRemote()">✕</button>
+      </div>
+      <div class="remote-shell">
+        <div class="r-brand">PHILIPS</div>
+        <div class="r-center"><button class="rkey rkey--power" title="Power / Standby" onclick="tvKey('Standby')">⏻</button></div>
+
+        <div class="r-row3">
+          <button class="rkey" title="Previous"     onclick="tvKey('Previous')">⏮</button>
+          <button class="rkey" title="Play / Pause" onclick="tvKey('Play')">⏯</button>
+          <button class="rkey" title="Next"         onclick="tvKey('Next')">⏭</button>
+        </div>
+        <div class="r-row3">
+          <button class="rkey" title="Rewind"       onclick="tvKey('Rewind')">⏪</button>
+          <button class="rkey" title="Stop"         onclick="tvKey('Stop')">⏹</button>
+          <button class="rkey" title="Fast Forward" onclick="tvKey('FastForward')">⏩</button>
+        </div>
+
+        <div class="r-divider"></div>
+
+        <div class="r-row3">
+          <button class="rkey rkey--fn" title="TV Guide" onclick="tvKey('TVGuide')">GUIDE</button>
+          <button class="rkey rkey--home" title="Home" onclick="tvKey('Adjust')">⌂</button>
+          <button class="rkey rkey--fn" title="Format"   onclick="tvKey('Format')">FMT</button>
+        </div>
+        <div class="r-sidepair">
+          <button class="rkey rkey--fn" title="Source / Inputs" onclick="tvKey('Source')">SRC</button>
+          <button class="rkey rkey--fn" title="Exit"            onclick="tvKey('Exit')">EXIT</button>
+        </div>
+        <div class="r-sidepair">
+          <button class="rkey" title="Info"    onclick="tvKey('Info')">ℹ</button>
+          <button class="rkey rkey--fn" title="Options" onclick="tvKey('Options')">OPT</button>
+        </div>
+
+        <div class="r-divider"></div>
+
+        <div class="r-dpad">
+          <span></span><button class="rkey r-arrow" onclick="tvKey('CursorUp')">▲</button><span></span>
+          <button class="rkey r-arrow" onclick="tvKey('CursorLeft')">◀</button>
+          <button class="rkey r-ok"   onclick="tvKey('Confirm')">OK</button>
+          <button class="rkey r-arrow" onclick="tvKey('CursorRight')">▶</button>
+          <span></span><button class="rkey r-arrow" onclick="tvKey('CursorDown')">▼</button><span></span>
+        </div>
+        <div class="r-row3">
+          <button class="rkey rkey--fn" title="Back" onclick="tvKey('Back')">◁ BACK</button>
+          <button class="rkey" title="Home" onclick="tvKey('Home')">⌂</button>
+          <button class="rkey rkey--fn" title="List" onclick="tvKey('Options')">LIST</button>
+        </div>
+
+        <div class="r-divider"></div>
+
+        <div class="r-volch">
+          <div class="r-vcol">
+            <button class="rkey" title="Volume Up"   onclick="tvKey('VolumeUp')">V+</button>
+            <button class="rkey" title="Volume Down" onclick="tvKey('VolumeDown')">V-</button>
+          </div>
+          <button class="rkey rkey--mute" title="Mute" onclick="tvKey('Mute')">🔇</button>
+          <div class="r-vcol">
+            <button class="rkey" title="Channel Up"   onclick="tvKey('ChannelStepUp')">C+</button>
+            <button class="rkey" title="Channel Down" onclick="tvKey('ChannelStepDown')">C-</button>
+          </div>
+        </div>
+
+        <div class="r-divider"></div>
+
+        <div class="r-colors">
+          <button class="rkey rkey--red"    onclick="tvKey('RedColour')"></button>
+          <button class="rkey rkey--green"  onclick="tvKey('GreenColour')"></button>
+          <button class="rkey rkey--yellow" onclick="tvKey('YellowColour')"></button>
+          <button class="rkey rkey--blue"   onclick="tvKey('BlueColour')"></button>
+        </div>
+
+        <div class="r-divider"></div>
+
+        <div class="r-numpad">
+          <button class="rkey" onclick="tvKey('Digit1')">1</button>
+          <button class="rkey" onclick="tvKey('Digit2')">2</button>
+          <button class="rkey" onclick="tvKey('Digit3')">3</button>
+          <button class="rkey" onclick="tvKey('Digit4')">4</button>
+          <button class="rkey" onclick="tvKey('Digit5')">5</button>
+          <button class="rkey" onclick="tvKey('Digit6')">6</button>
+          <button class="rkey" onclick="tvKey('Digit7')">7</button>
+          <button class="rkey" onclick="tvKey('Digit8')">8</button>
+          <button class="rkey" onclick="tvKey('Digit9')">9</button>
+          <button class="rkey rkey--fn" title="Subtitles / CC" onclick="tvKey('Subtitle')">CC</button>
+          <button class="rkey" onclick="tvKey('Digit0')">0</button>
+          <button class="rkey rkey--fn" title="Teletext"       onclick="tvKey('Text')">TXT</button>
+        </div>
       </div>
     </div>
   </div>
@@ -302,10 +543,114 @@
       fastPollTimer = setInterval(loadMachines, 2000);
     }
 
+    let remoteActiveTvId = null;
+
+    function openRemote(id, name) {
+      remoteActiveTvId = id;
+      document.getElementById('remote-tv-name').textContent = name;
+      document.getElementById('remote-overlay').classList.add('open');
+    }
+
+    function closeRemote() {
+      remoteActiveTvId = null;
+      document.getElementById('remote-overlay').classList.remove('open');
+    }
+
+    async function tvKey(key) {
+      if (!remoteActiveTvId) return;
+      await fetch(`/api/tvs/${remoteActiveTvId}/key`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key }),
+      });
+    }
+
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeRemote(); });
+
+    const pendingTVActions = {};
+    let lastTVs = [];
+    let tvStatusTimer = null;
+    let tvFastStatusTimer = null;
+
+    function renderTVs() {
+      const el = document.getElementById('tvs-list');
+      if (!lastTVs.length) { el.innerHTML = '<div class="empty">No TVs configured.</div>'; return; }
+      el.innerHTML = lastTVs.map(tv => {
+        if (pendingTVActions[tv.id] === 'poweroff' && tv.online === false) delete pendingTVActions[tv.id];
+        if (pendingTVActions[tv.id] === 'wake'     && tv.online === true)  delete pendingTVActions[tv.id];
+
+        let btn;
+        if (pendingTVActions[tv.id] === 'poweroff') {
+          btn = `<span class="pending-label"><span class="spinner"></span>Powering off…</span>`;
+        } else if (pendingTVActions[tv.id] === 'wake') {
+          btn = `<span class="pending-label"><span class="spinner"></span>Waking up…</span>`;
+        } else if (tv.online === true) {
+          const remoteBtn = tv.brand === 'philips'
+            ? `<button class="btn-action btn-remote" onclick="openRemote('${tv.id}','${tv.name}')">📺 Remote</button>`
+            : '';
+          btn = `<button class="btn-action btn-poweroff" onclick="tvAction('${tv.id}','poweroff')">⏻ Power Off</button>${remoteBtn}`;
+        } else if (tv.online === false && tv.mac) {
+          btn = `<button class="btn-action btn-wake" onclick="tvAction('${tv.id}','wake')">▶ Wake</button>`;
+        } else {
+          btn = '';
+        }
+
+        const dotClass = tv.online === true ? 'status-dot--online' : tv.online === false ? 'status-dot--offline' : 'status-dot--checking';
+        const meta = [tv.brand, tv.model].filter(Boolean).join(' · ');
+        return `
+        <div class="list-item">
+          <div class="item-left">
+            <div class="status-dot ${dotClass}"></div>
+            <span class="item-name">${tv.name}</span>
+            <span class="item-meta">${meta || tv.ip_address}</span>
+          </div>
+          ${btn}
+        </div>`;
+      }).join('');
+    }
+
+    async function loadTVConfig() {
+      try {
+        lastTVs = await fetch('/api/tvs').then(r => r.json());
+        renderTVs();
+      } catch { /* ignore */ }
+    }
+
+    async function refreshTVStatus() {
+      try {
+        const statuses = await fetch('/api/tvs/status').then(r => r.json());
+        const map = Object.fromEntries(statuses.map(s => [s.id, s.online]));
+        lastTVs = lastTVs.map(tv => ({ ...tv, online: map[tv.id] ?? null }));
+        if (!Object.keys(pendingTVActions).length && tvFastStatusTimer) {
+          clearInterval(tvFastStatusTimer);
+          tvFastStatusTimer = null;
+        }
+      } catch { /* ignore */ }
+      renderTVs();
+    }
+
+    async function tvAction(id, action) {
+      pendingTVActions[id] = action;
+      renderTVs();
+      try {
+        const res = await fetch(`/api/tvs/${id}/${action}`, { method: 'POST' });
+        if (!res.ok) throw new Error();
+        if (tvFastStatusTimer) clearInterval(tvFastStatusTimer);
+        tvFastStatusTimer = setInterval(refreshTVStatus, 2000);
+      } catch {
+        delete pendingTVActions[id];
+        renderTVs();
+        return;
+      }
+      setTimeout(() => { if (pendingTVActions[id]) { delete pendingTVActions[id]; renderTVs(); } }, 15000);
+    }
+
     loadWebsites();
     loadMachines();
+    loadTVConfig().then(refreshTVStatus);
     setInterval(loadWebsites, 5000);
     setInterval(loadMachines, 10000);
+    tvStatusTimer = setInterval(refreshTVStatus, 10000);
   </script>
 </body>
 </html>

@@ -24,6 +24,17 @@
 
       <div class="nav-divider"></div>
 
+      <button
+        class="nav-item"
+        :class="{ 'nav-item--active': activePage === 'print' }"
+        @click="$emit('navigate', 'print')"
+      >
+        <svg viewBox="0 0 24 24" fill="currentColor" class="nav-icon"><path :d="mdiPrinter" /></svg>
+        <span>Print</span>
+      </button>
+
+      <div class="nav-divider"></div>
+
       <a href="/gui" class="nav-item nav-item--link">
         <svg viewBox="0 0 24 24" fill="currentColor" class="nav-icon"><path :d="mdiMonitorDashboard" /></svg>
         <span>GUI</span>
@@ -66,9 +77,9 @@
 
 <script setup>
 import { computed, ref, watch, nextTick } from 'vue';
-import { mdiViewDashboard, mdiWeb, mdiMonitor, mdiCog, mdiTextBox, mdiDocker, mdiServer, mdiDesktopTower, mdiDesktopClassic, mdiMonitorDashboard, mdiDownload } from '@mdi/js';
+import { mdiViewDashboard, mdiWeb, mdiMonitor, mdiCog, mdiTextBox, mdiDocker, mdiServer, mdiDesktopTower, mdiDesktopClassic, mdiMonitorDashboard, mdiDownload, mdiTelevision, mdiRouterNetwork, mdiPrinter } from '@mdi/js';
 
-const ICON_MAP = { mdiViewDashboard, mdiWeb, mdiMonitor, mdiCog, mdiTextBox, mdiDocker, mdiServer, mdiDesktopTower, mdiDesktopClassic };
+const ICON_MAP = { mdiViewDashboard, mdiWeb, mdiMonitor, mdiCog, mdiTextBox, mdiDocker, mdiServer, mdiDesktopTower, mdiDesktopClassic, mdiTelevision, mdiRouterNetwork };
 
 const props = defineProps({
   pages: { type: Array, default: () => [] },

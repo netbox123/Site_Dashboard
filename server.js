@@ -7,16 +7,20 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { createConnection } from 'net';
 import { createServer as createHttpServer } from 'http';
-import { WebSocketServer } from 'ws';
+import WebSocket, { WebSocketServer } from 'ws';
 import dgram from 'dgram';
+import http from 'http';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const pty = require('node-pty');
+import mqttLib from 'mqtt';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEBSITES_FILE  = path.join(__dirname, 'config', 'websites.json');
 const PAGES_FILE     = path.join(__dirname, 'config', 'pages.json');
 const MACHINES_FILE  = path.join(__dirname, 'config', 'machines.json');
+const TVS_FILE       = path.join(__dirname, 'config', 'tvs.json');
+const LG_KEYS_FILE   = path.join(__dirname, 'config', 'lg_keys.json');
 const LOGS_DIR      = path.join(__dirname, 'logs');
 const DASHBOARD_PORT = 9000;
 const MAX_LOG_ENTRIES = 500;
@@ -347,6 +351,73 @@ echo "    systemctl disable --now dashboard-agent && rm -rf $INSTALL_DIR $SERVIC
   res.send(script);
 });
 
+// ── Site info & Report API ────────────────────────────────────────────────────
+
+const SITE_FILE = path.join(__dirname, 'config', 'site.json');
+
+app.get('/api/site', (_req, res) => {
+  try { res.json(JSON.parse(readFileSync(SITE_FILE, 'utf8'))); }
+  catch { res.status(500).json({ error: 'Could not read site.json' }); }
+});
+
+app.get('/api/report-data', async (_req, res) => {
+  const read = (file) => { try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return null; } };
+
+  const site      = read(SITE_FILE);
+  const websites  = read(WEBSITES_FILE);
+  const machines  = read(path.join(__dirname, 'config', 'machines.json'));
+  const tvs       = read(path.join(__dirname, 'config', 'tvs.json'));
+  const clients   = read(path.join(__dirname, 'config', 'clientIPlist.json'));
+
+  // Caddy config (Caddyfile)
+  let caddy = null;
+  try {
+    const cr = await fetch('http://localhost:9000/api/caddy/config');
+    if (cr.ok) caddy = await cr.json(); // { path, content }
+  } catch {}
+
+  // Container list (names + images only, no status)
+  let containers = null;
+  try {
+    const { stdout } = await execAsync("docker ps -a --format '{{json .}}'");
+    containers = stdout.trim().split('\n').filter(Boolean).map(l => {
+      const o = JSON.parse(l);
+      return { name: o.Names, image: o.Image };
+    });
+  } catch {}
+
+  // Colima VM config (key fields + full raw file)
+  let colimaConfig = null;
+  try {
+    const cr = await fetch('http://localhost:9000/api/colima/config');
+    if (cr.ok) {
+      const { content, path: filePath } = await cr.json();
+      const pick = (key) => { const m = content.match(new RegExp(`^${key}:\\s*(.+)$`, 'm')); return m ? m[1].trim() : null; };
+      const mounts = [...content.matchAll(/^\s+-\s+location:\s+(.+)$/gm)].map(m => m[1].trim());
+      colimaConfig = {
+        cpu:     pick('cpu'),
+        memory:  pick('memory') ? pick('memory') + ' GiB' : null,
+        disk:    pick('disk')   ? pick('disk')   + ' GiB' : null,
+        arch:    pick('arch'),
+        runtime: pick('runtime'),
+        vmType:  pick('vmType'),
+        mounts:  mounts.length ? mounts : null,
+        rawContent: content,
+        filePath,
+      };
+    }
+  } catch {}
+
+  // Mac Mini — full data (hardware, network, storage, usb, displays)
+  let macmini = null;
+  try {
+    const mr = await fetch('http://localhost:9000/api/macmini');
+    if (mr.ok) macmini = await mr.json();
+  } catch {}
+
+  res.json({ site, websites, machines, tvs, clients, caddy, containers, colimaConfig, macmini });
+});
+
 // ── Pages API ─────────────────────────────────────────────────────────────────
 
 app.get('/api/pages', (_req, res) => {
@@ -371,21 +442,36 @@ function saveMachines(machines) {
   writeFileSync(MACHINES_FILE, JSON.stringify(machines, null, 2));
 }
 
-function sendWoL(mac) {
+function sendWoL(mac, targetIp) {
   const bytes = mac.replace(/[:-]/g, '').match(/.{2}/g).map(b => parseInt(b, 16));
   const packet = Buffer.alloc(102);
   packet.fill(0xff, 0, 6);
   for (let i = 1; i <= 16; i++) bytes.forEach((b, j) => { packet[6 + (i - 1) * 6 + j] = b; });
+
+  const subnetBroadcast = targetIp
+    ? targetIp.split('.').slice(0, 3).join('.') + '.255'
+    : '255.255.255.255';
+  const targets = ['255.255.255.255', subnetBroadcast];
+  if (targetIp) targets.push(targetIp);
+
   return new Promise((resolve, reject) => {
     const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-    sock.bind(0, () => {
+    sock.bind(0, '0.0.0.0', () => {
       sock.setBroadcast(true);
-      sock.send(packet, 0, packet.length, 9, '255.255.255.255', err => {
-        sock.close();
-        err ? reject(err) : resolve();
-      });
+      let pending = targets.length;
+      let sent = 0;
+      for (const addr of targets) {
+        sock.send(packet, 0, packet.length, 9, addr, err => {
+          if (!err) sent++;
+          if (--pending === 0) { sock.close(); sent > 0 ? resolve() : reject(new Error('all sends failed')); }
+        });
+      }
     });
   });
+}
+
+function getWifiIp() {
+  try { return execSync('ipconfig getifaddr en1', { encoding: 'utf8' }).trim(); } catch { return null; }
 }
 
 app.get('/api/machines', (_req, res) => {
@@ -440,6 +526,8 @@ app.post('/api/machines/register', (req, res) => {
   }
   saveMachines(machines);
   console.log(`[Machines] Registered: ${name} (${ip_address})`);
+  const isOnline = !shutdownTimes.has(machine.id);
+  publishMachineStatus(machine, isOnline);
   res.json(machine);
 });
 
@@ -455,6 +543,7 @@ app.post('/api/machines/:id/shutdown', async (req, res) => {
     });
     if (!r.ok) throw new Error(`Agent responded with ${r.status}`);
     console.log(`[Machines] Shutdown sent to ${machine.name}`);
+    publishMachineStatus(machine, false);
     res.json({ ok: true });
   } catch (err) {
     shutdownTimes.delete(machine.id); // Revert — couldn't reach agent
@@ -483,6 +572,446 @@ app.delete('/api/machines/:id', (req, res) => {
   saveMachines(machines);
   console.log(`[Machines] Deleted: ${removed.name}`);
   res.json({ ok: true });
+});
+
+// ── TVs API ───────────────────────────────────────────────────────────────────
+
+const tvOffTimes = new Map(); // id → timestamp, same pattern as shutdownTimes
+
+function loadTVs() {
+  try { return JSON.parse(readFileSync(TVS_FILE, 'utf8')); } catch { return []; }
+}
+
+function saveTVs(tvs) {
+  writeFileSync(TVS_FILE, JSON.stringify(tvs, null, 2));
+}
+
+// ── LG webOS SSAP ─────────────────────────────────────────────────────────────
+
+function loadLGKeys() {
+  try { return JSON.parse(readFileSync(LG_KEYS_FILE, 'utf8')); } catch { return {}; }
+}
+function saveLGKeys(keys) {
+  writeFileSync(LG_KEYS_FILE, JSON.stringify(keys, null, 2));
+}
+
+const LG_MANIFEST = {
+  manifestVersion: 1,
+  appVersion: '1.1',
+  signed: {
+    created: '20140509',
+    appId: 'com.lge.test',
+    vendorId: 'com.lge',
+    localizedAppNames: { '': 'Site Dashboard' },
+    localizedVendorNames: { '': 'Site Dashboard' },
+    permissions: ['CONTROL_POWER', 'READ_POWER_STATE'],
+    serial: '2f930e2d2cfe083771f68e4fe7bb07'
+  },
+  permissions: ['CONTROL_POWER', 'READ_POWER_STATE']
+};
+
+function lgRequest(tv, uri, payload = {}) {
+  const keys = loadLGKeys();
+  const clientKey = keys[tv.id];
+
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`wss://${tv.ip_address}:3001`, { rejectUnauthorized: false });
+    let cmdSent = false;
+    let reqId = 0;
+
+    const timeout = setTimeout(() => { ws.terminate(); reject(new Error('LG SSAP timeout')); }, 10000);
+
+    ws.once('open', () => {
+      const reg = { forcePairing: false, pairingType: 'PROMPT', manifest: LG_MANIFEST };
+      if (clientKey) reg['client-key'] = clientKey;
+      ws.send(JSON.stringify({ type: 'register', id: 'reg_0', payload: reg }));
+    });
+
+    ws.on('message', raw => {
+      let msg;
+      try { msg = JSON.parse(raw.toString()); } catch { return; }
+
+      if (msg.type === 'registered') {
+        const key = msg.payload?.['client-key'];
+        if (key && key !== clientKey) {
+          keys[tv.id] = key;
+          saveLGKeys(keys);
+          console.log(`[TVs] LG client-key saved for ${tv.name}`);
+        }
+        if (cmdSent) return;
+        cmdSent = true;
+        ws.send(JSON.stringify({ type: 'request', id: `req_${++reqId}`, uri, payload }));
+      } else if (msg.type === 'response') {
+        clearTimeout(timeout);
+        ws.close();
+        resolve(msg.payload);
+      } else if (msg.type === 'error') {
+        clearTimeout(timeout);
+        ws.close();
+        reject(new Error(msg.error || 'LG SSAP error'));
+      }
+    });
+
+    ws.on('error', err => {
+      clearTimeout(timeout);
+      // TV drops connection immediately on turnOff — treat as success if command was already sent
+      if (cmdSent) { resolve({}); return; }
+      reject(err);
+    });
+    // TV closes connection immediately after turning off — treat close after command as success
+    ws.on('close', () => { if (cmdSent) { clearTimeout(timeout); resolve({}); } });
+  });
+}
+
+async function lgPowerOff(tv) {
+  await lgRequest(tv, 'ssap://system/turnOff');
+}
+
+// With Quick Start+ the TV's port 3001 is always open — check if the WebSocket
+// actually responds (screen active) rather than just doing a TCP check.
+function lgIsOnline(tv) {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(`wss://${tv.ip_address}:3001`, { rejectUnauthorized: false });
+    let done = false;
+    const finish = (val) => { if (!done) { done = true; ws.terminate(); resolve(val); } };
+    setTimeout(() => finish(false), 1500);
+    ws.on('open', () => {
+      const reg = { forcePairing: false, pairingType: 'PROMPT', manifest: LG_MANIFEST };
+      const key = loadLGKeys()[tv.id];
+      if (key) reg['client-key'] = key;
+      ws.send(JSON.stringify({ type: 'register', id: 'chk_0', payload: reg }));
+    });
+    ws.on('message', raw => {
+      try { const msg = JSON.parse(raw.toString()); if (msg.type === 'registered') finish(true); } catch {}
+    });
+    ws.on('error', () => finish(false));
+  });
+}
+
+async function lgWake(tv) {
+  if (await lgIsOnline(tv)) { console.log(`[TVs] ${tv.name} already on`); return; }
+
+  for (let i = 0; i < 3; i++) {
+    await sendWoL(tv.mac, tv.ip_address);
+    if (i < 2) await new Promise(r => setTimeout(r, 500));
+  }
+  console.log(`[TVs] WoL x3 sent to ${tv.name} (${tv.mac}) — waiting for screen`);
+
+  // lgIsOnline has 1.5s timeout — 40 checks ≈ 60s
+  for (let i = 0; i < 40; i++) {
+    if (await lgIsOnline(tv)) {
+      console.log(`[TVs] ${tv.name} on after ~${((i + 1) * 1.5).toFixed(0)}s`);
+      return;
+    }
+  }
+  console.log(`[TVs] ${tv.name} never came on after WoL (60s)`);
+}
+
+function pingOnline(ip) {
+  return new Promise((resolve) => {
+    exec(`ping -c 1 -W 1000 ${ip}`, (err) => resolve(!err));
+  });
+}
+
+function checkTVOnline(ip, brand, tv = null) {
+  if (brand === 'lg') return lgIsOnline(tv || { ip_address: ip, id: '' });
+  return new Promise((resolve) => {
+    const sock = createConnection({ host: ip, port: 1925 });
+    sock.setTimeout(1500);
+    sock.once('connect', () => { sock.destroy(); resolve(true); });
+    sock.once('error',   () => { sock.destroy(); pingOnline(ip).then(resolve); });
+    sock.once('timeout', () => { sock.destroy(); pingOnline(ip).then(resolve); });
+  });
+}
+
+function philipsPost(ip, path, body) {
+  const bodyStr = JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: ip, port: 1925, path, method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
+    }, (res) => { res.resume(); resolve(res.statusCode); });
+    req.setTimeout(3000, () => { req.destroy(); reject(new Error('timeout')); });
+    req.on('error', reject);
+    req.write(bodyStr);
+    req.end();
+  });
+}
+
+function philipsPowerOff(ip) { return philipsPost(ip, '/6/input/key', { key: 'Standby' }); }
+function philipsTurnOn(ip)   { return philipsPost(ip, '/6/powerstate', { powerstate: 'On' }); }
+
+app.get('/api/tvs', (_req, res) => {
+  res.json(loadTVs().map(tv => ({ ...tv, online: null })));
+});
+
+app.get('/api/tvs/status', async (_req, res) => {
+  const tvs = loadTVs();
+  const now  = Date.now();
+  const result = await Promise.all(tvs.map(async tv => {
+    const poweredOff = tvOffTimes.has(tv.id) && (now - tvOffTimes.get(tv.id)) < 45000;
+    const online = poweredOff ? false : await checkTVOnline(tv.ip_address, tv.brand, tv);
+    publishTVStatus(tv, online);
+    return { id: tv.id, online };
+  }));
+  res.json(result);
+});
+
+app.post('/api/tvs', (req, res) => {
+  const { name, ip_address, mac, brand, model } = req.body ?? {};
+  if (!name || !ip_address) return res.status(400).json({ error: 'name and ip_address required' });
+  const tvs = loadTVs();
+  const id = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+  if (tvs.find(t => t.id === id)) return res.status(409).json({ error: 'TV with this name already exists' });
+  const tv = { id, name, ip_address, mac: mac || null, brand: brand || 'philips', model: model || '' };
+  tvs.push(tv);
+  saveTVs(tvs);
+  res.status(201).json(tv);
+});
+
+app.put('/api/tvs/:id', (req, res) => {
+  const tvs = loadTVs();
+  const tv = tvs.find(t => t.id === req.params.id);
+  if (!tv) return res.status(404).json({ error: 'TV not found' });
+  const { name, ip_address, mac, brand, model } = req.body ?? {};
+  if (name)              tv.name       = name;
+  if (ip_address)        tv.ip_address = ip_address;
+  tv.mac   = mac   || null;
+  if (brand)             tv.brand      = brand;
+  if (model !== undefined) tv.model    = model;
+  saveTVs(tvs);
+  res.json(tv);
+});
+
+app.delete('/api/tvs/:id', (req, res) => {
+  const tvs = loadTVs();
+  const idx = tvs.findIndex(t => t.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'TV not found' });
+  tvs.splice(idx, 1);
+  saveTVs(tvs);
+  res.json({ ok: true });
+});
+
+app.post('/api/tvs/:id/poweroff', async (req, res) => {
+  const tv = loadTVs().find(t => t.id === req.params.id);
+  if (!tv) return res.status(404).json({ error: 'TV not found' });
+  tvOffTimes.set(tv.id, Date.now());
+  try {
+    if (tv.brand === 'philips') {
+      await philipsPowerOff(tv.ip_address);
+    } else if (tv.brand === 'lg') {
+      await lgPowerOff(tv);
+    } else {
+      throw new Error(`Power off not yet supported for ${tv.brand}`);
+    }
+    console.log(`[TVs] Power off sent to ${tv.name}`);
+    res.json({ ok: true });
+  } catch (err) {
+    tvOffTimes.delete(tv.id);
+    res.status(502).json({ error: err.message });
+  }
+});
+
+const tvWakeInProgress = new Set();
+
+function philipsGetPowerstate(ip) {
+  return new Promise((resolve, reject) => {
+    const r = http.get({ hostname: ip, port: 1925, path: '/6/powerstate' },
+      res => { let d = ''; res.on('data', c => d += c); res.on('end', () => { try { resolve(JSON.parse(d)); } catch { reject(new Error('bad json')); } }); }
+    );
+    r.setTimeout(1500, () => { r.destroy(); reject(new Error('timeout')); });
+    r.on('error', reject);
+  });
+}
+
+// Philips WoWLAN wake flow:
+// 1. Send WoL to WiFi MAC
+// 2. WiFi chip wakes and becomes ping-reachable for ~30s
+// 3. Once ping OK, send Digit1 key → screen turns on
+async function philipsWake(tv) {
+  const ip  = tv.ip_address;
+  const mac = tv.mac;
+
+  // Fast path: API already reachable (TV in recent standby, WiFi still active)
+  try {
+    const state = await philipsGetPowerstate(ip);
+    console.log(`[TVs] ${tv.name} API already up: powerstate=${state.powerstate}`);
+    if (state.powerstate !== 'On') {
+      try {
+        await philipsTurnOn(ip);
+        console.log(`[TVs] TurnOn sent to ${tv.name} (direct standby path)`);
+      } catch (err) {
+        console.log(`[TVs] TurnOn no response (${err.message}) — TV may still have woken`);
+      }
+    }
+    return;
+  } catch { /* WiFi chip not reachable — send WoL */ }
+
+  // Send WoL to wake WiFi chip
+  try { execSync(`sudo arp -s ${ip} ${mac}`, { stdio: 'ignore' }); } catch {}
+  for (let i = 0; i < 3; i++) {
+    await sendWoL(mac, ip);
+    if (i < 2) await new Promise(r => setTimeout(r, 500));
+  }
+  try { execSync(`sudo arp -d ${ip}`, { stdio: 'ignore' }); } catch {}
+  console.log(`[TVs] WoL x3 sent to ${tv.name} (${mac}) — polling for WiFi chip`);
+
+  // Poll: ping first (chip comes up before port 1925), then send Digit1
+  for (let i = 0; i < 30; i++) {  // 45s window, 1.5s steps
+    await new Promise(r => setTimeout(r, 1500));
+    const elapsed = ((i + 1) * 1.5).toFixed(1);
+
+    const pingOk = await new Promise(resolve => exec(`ping -c 1 -W 500 ${ip}`, err => resolve(!err)));
+    if (!pingOk) continue;
+    console.log(`[TVs] ${tv.name} ping reachable after ${elapsed}s`);
+
+    // Give port 1925 up to 3s to open
+    let state = null;
+    for (let j = 0; j < 3; j++) {
+      try { state = await philipsGetPowerstate(ip); break; }
+      catch { await new Promise(r => setTimeout(r, 1000)); }
+    }
+    if (state) {
+      console.log(`[TVs] ${tv.name} API up: powerstate=${state.powerstate}`);
+      if (state.powerstate === 'On') { console.log(`[TVs] ${tv.name} already On`); return; }
+    } else {
+      console.log(`[TVs] ${tv.name} ping ok but port 1925 not open yet — waiting before TurnOn`);
+    }
+
+    // Brief pause — chip needs a moment after waking before it accepts POST commands
+    await new Promise(r => setTimeout(r, 2000));
+
+    try {
+      await philipsTurnOn(ip);
+      console.log(`[TVs] TurnOn sent to ${tv.name} — screen should turn on`);
+    } catch (err) {
+      console.log(`[TVs] TurnOn sent to ${tv.name} (no HTTP response — normal during wake)`);
+    }
+    return;
+  }
+  console.log(`[TVs] ${tv.name} never responded after WoL (45s)`);
+}
+
+app.post('/api/tvs/:id/wake', async (req, res) => {
+  const tv = loadTVs().find(t => t.id === req.params.id);
+  if (!tv) return res.status(404).json({ error: 'TV not found' });
+  if (!tv.mac) return res.status(400).json({ error: 'No MAC address for this TV' });
+  if (tvWakeInProgress.has(tv.id)) return res.json({ ok: true, note: 'already in progress' });
+  res.json({ ok: true });
+
+  tvWakeInProgress.add(tv.id);
+  (async () => {
+    try {
+      if (tv.brand === 'philips') {
+        await philipsWake(tv);
+      } else if (tv.brand === 'lg') {
+        await lgWake(tv);
+      } else {
+        await sendWoL(tv.mac, tv.ip_address);
+        console.log(`[TVs] WoL sent to ${tv.name}`);
+      }
+      tvOffTimes.delete(tv.id);
+    } catch (err) {
+      console.error(`[TVs] Wake error for ${tv.name}: ${err.message}`);
+    } finally {
+      tvWakeInProgress.delete(tv.id);
+    }
+  })();
+});
+
+app.post('/api/tvs/:id/key', async (req, res) => {
+  const tv = loadTVs().find(t => t.id === req.params.id);
+  if (!tv) return res.status(404).json({ error: 'TV not found' });
+  const { key } = req.body;
+  if (!key) return res.status(400).json({ error: 'key required' });
+  try {
+    if (tv.brand === 'philips') {
+      await philipsPost(tv.ip_address, '/6/input/key', { key });
+    } else {
+      return res.status(400).json({ error: `Key not supported for ${tv.brand}` });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Clients API ───────────────────────────────────────────────────────────────
+
+const CLIENTS_FILE = path.join(__dirname, 'config', 'clientIPlist.json');
+const UNIFI_FILE   = path.join(__dirname, 'config', 'unifi.json');
+
+function loadClients() {
+  try { return JSON.parse(readFileSync(CLIENTS_FILE, 'utf8')); } catch { return []; }
+}
+
+function loadUnifiConfig() {
+  try { return JSON.parse(readFileSync(UNIFI_FILE, 'utf8')); } catch { return {}; }
+}
+
+async function fetchUnifiClients() {
+  const cfg = loadUnifiConfig();
+  if (!cfg.controller || !cfg.apiKey) throw new Error('Unifi not configured (need controller + apiKey)');
+
+  const base = cfg.controller.replace(/\/$/, '');
+  const site = cfg.site || 'default';
+
+  const { fetch: undiciFetch, Agent } = await import('undici');
+  const agent = new Agent({ connect: { rejectUnauthorized: false } });
+
+  const clientRes = await undiciFetch(`${base}/proxy/network/api/s/${site}/stat/alluser`, {
+    headers: { 'X-API-Key': cfg.apiKey },
+    dispatcher: agent,
+  });
+  if (!clientRes.ok) throw new Error(`Clients fetch failed: ${clientRes.status}`);
+  const body = await clientRes.json();
+  const raw = body.data || [];
+
+  return raw.map(c => ({
+    hostname: c.hostname || c.name || '',
+    ip:       c.ip || c.last_ip || '',
+    mac:      c.mac || '',
+    vendor:   c.oui || '',
+    wired:    !!c.is_wired,
+    signal:   c.signal ?? null,
+    last_seen: c.last_seen ? new Date(c.last_seen * 1000).toISOString() : null,
+  })).sort((a, b) => {
+    const aNum = parseInt(a.ip.split('.').pop() || '0');
+    const bNum = parseInt(b.ip.split('.').pop() || '0');
+    return aNum - bNum;
+  });
+}
+
+app.get('/api/clients', (_req, res) => {
+  res.json(loadClients());
+});
+
+app.get('/api/clients/config', (_req, res) => {
+  const cfg = loadUnifiConfig();
+  res.json({ controller: cfg.controller || '', site: cfg.site || 'default', configured: !!(cfg.controller && cfg.apiKey) });
+});
+
+app.put('/api/clients/config', (req, res) => {
+  const { controller, apiKey, site } = req.body ?? {};
+  const current = loadUnifiConfig();
+  const updated = { ...current };
+  if (controller !== undefined) updated.controller = controller;
+  if (apiKey     !== undefined) updated.apiKey     = apiKey;
+  if (site       !== undefined) updated.site       = site;
+  writeFileSync(UNIFI_FILE, JSON.stringify(updated, null, 2));
+  res.json({ ok: true });
+});
+
+app.post('/api/clients/refresh', async (_req, res) => {
+  try {
+    const clients = await fetchUnifiClients();
+    writeFileSync(CLIENTS_FILE, JSON.stringify(clients, null, 2));
+    console.log(`[Clients] Refreshed ${clients.length} clients from Unifi`);
+    res.json({ ok: true, count: clients.length });
+  } catch (err) {
+    console.error(`[Clients] Refresh failed: ${err.message}`);
+    res.status(502).json({ error: err.message });
+  }
 });
 
 // ── Websites API ──────────────────────────────────────────────────────────────
@@ -1123,6 +1652,130 @@ wss.on('connection', (ws, id) => {
 
   ws.on('close', () => { try { shell.kill(); } catch { /* ignore */ } });
 });
+
+// ── MQTT bridge ───────────────────────────────────────────────────────────────
+
+const MQTT_CONFIG_FILE = path.join(__dirname, 'config', 'mqtt.json');
+
+function loadMqttConfig() {
+  try { return JSON.parse(readFileSync(MQTT_CONFIG_FILE, 'utf8')); } catch { return null; }
+}
+
+let mqttClient = null;
+
+function mqttPublish(topic, payload, opts = {}) {
+  if (!mqttClient?.connected) return;
+  mqttClient.publish(topic, typeof payload === 'string' ? payload : JSON.stringify(payload), { retain: true, ...opts });
+}
+
+function publishMachineStatus(machine, online) {
+  const base = `site_dashboard/machines/${machine.id}`;
+  mqttPublish(`${base}/online`, online ? 'ON' : 'OFF');
+  mqttPublish(`${base}/state`, {
+    name: machine.name, online, ip: machine.ip_address,
+    os: machine.os || '', mac: machine.mac || '',
+  });
+}
+
+function publishTVStatus(tv, online) {
+  const base = `site_dashboard/tvs/${tv.id}`;
+  mqttPublish(`${base}/online`, online ? 'ON' : 'OFF');
+  mqttPublish(`${base}/state`, {
+    name: tv.name, online, brand: tv.brand || '', model: tv.model || '', ip: tv.ip_address,
+  });
+}
+
+async function publishAllMachineStatuses() {
+  const machines = loadMachines();
+  const now = Date.now();
+  for (const m of machines) {
+    const online = !shutdownTimes.has(m.id) && (m.last_seen ? (now - new Date(m.last_seen).getTime()) < 60000 : false);
+    publishMachineStatus(m, online);
+  }
+}
+
+async function publishAllTVStatuses() {
+  const tvs = loadTVs();
+  const now = Date.now();
+  for (const tv of tvs) {
+    const poweredOff = tvOffTimes.has(tv.id) && (now - tvOffTimes.get(tv.id)) < 45000;
+    const online = poweredOff ? false : await checkTVOnline(tv.ip_address, tv.brand, tv);
+    publishTVStatus(tv, online);
+  }
+}
+
+async function handleMachineCommand(id, command) {
+  const machine = loadMachines().find(m => m.id === id);
+  if (!machine) return;
+  console.log(`[MQTT] Machine command: ${id} → ${command}`);
+  if (command === 'wake' && machine.mac) {
+    await sendWoL(machine.mac);
+  } else if (command === 'shutdown' && machine.ip_address && machine.agent_port) {
+    shutdownTimes.set(machine.id, Date.now());
+    try {
+      await fetch(`http://${machine.ip_address}:${machine.agent_port}/shutdown`, { method: 'POST', signal: AbortSignal.timeout(5000) });
+      publishMachineStatus(machine, false);
+    } catch { shutdownTimes.delete(machine.id); }
+  }
+}
+
+async function handleTVCommand(id, command) {
+  const tv = loadTVs().find(t => t.id === id);
+  if (!tv) return;
+  console.log(`[MQTT] TV command: ${id} → ${command}`);
+  if (command === 'wake') {
+    if (tv.brand === 'philips') philipsWake(tv);
+    else if (tv.brand === 'lg') lgWake(tv);
+    else sendWoL(tv.mac, tv.ip_address);
+  } else if (command === 'poweroff') {
+    tvOffTimes.set(tv.id, Date.now());
+    if (tv.brand === 'philips') philipsPowerOff(tv.ip_address).then(() => publishTVStatus(tv, false)).catch(() => {});
+    else if (tv.brand === 'lg') lgPowerOff(tv);
+  } else if (command.startsWith('key:')) {
+    const key = command.slice(4);
+    if (tv.brand === 'philips') philipsPost(tv.ip_address, '/6/input/key', { key }).catch(() => {});
+  }
+}
+
+function setupMqtt() {
+  const cfg = loadMqttConfig();
+  if (!cfg) { console.log('[MQTT] No config found — bridge disabled'); return; }
+
+  mqttClient = mqttLib.connect(cfg.broker_url, {
+    clientId:       'site_dashboard',
+    username:       cfg.username,
+    password:       cfg.password,
+    reconnectPeriod: cfg.reconnect_period_ms ?? 5000,
+    connectTimeout:  cfg.connect_timeout_ms  ?? 10000,
+    clean:           cfg.clean_session       ?? true,
+  });
+
+  mqttClient.on('connect', () => {
+    console.log('[MQTT] Connected to broker');
+    mqttClient.subscribe('site_dashboard/machines/+/command');
+    mqttClient.subscribe('site_dashboard/tvs/+/command');
+    publishAllMachineStatuses();
+    publishAllTVStatuses();
+  });
+
+  mqttClient.on('error',       err => console.error('[MQTT] Error:', err.message));
+  mqttClient.on('reconnect',   ()  => console.log('[MQTT] Reconnecting…'));
+  mqttClient.on('disconnect',  ()  => console.log('[MQTT] Disconnected'));
+
+  mqttClient.on('message', (topic, payload) => {
+    const msg = payload.toString().trim();
+    const machineMatch = topic.match(/^site_dashboard\/machines\/(.+)\/command$/);
+    if (machineMatch) { handleMachineCommand(machineMatch[1], msg); return; }
+    const tvMatch = topic.match(/^site_dashboard\/tvs\/(.+)\/command$/);
+    if (tvMatch) handleTVCommand(tvMatch[1], msg);
+  });
+
+  // Keep retained messages fresh
+  setInterval(publishAllMachineStatuses, 30000);
+  setInterval(publishAllTVStatuses,      60000);
+}
+
+setupMqtt();
 
 httpServer.listen(DASHBOARD_PORT, async () => {
   console.log(`[Dashboard] Running at http://localhost:${DASHBOARD_PORT}`);

@@ -1,0 +1,10 @@
+[
+  {
+    "id": "living-room",
+    "name": "Living Room",
+    "ip_address": "192.168.0.x",
+    "mac": "xx:xx:xx:xx:xx:xx",
+    "brand": "philips",
+    "model": "43PUS6503/12"
+  }
+]

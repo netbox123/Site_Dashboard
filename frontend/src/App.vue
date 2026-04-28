@@ -7,6 +7,9 @@
       <CaddyPage       v-if="activePage === 'caddy'" />
       <MacMiniPage     v-if="activePage === 'macmini'" />
       <MachinesPage    v-if="activePage === 'machines'" />
+      <TvsPage         v-if="activePage === 'tvs'" />
+      <ClientsPage     v-if="activePage === 'clients'" />
+      <PrintPage       v-if="activePage === 'print'" />
     </main>
   </div>
 </template>
@@ -19,6 +22,9 @@ import ContainersPage from './views/ContainersPage.vue';
 import CaddyPage from './views/CaddyPage.vue';
 import MacMiniPage from './views/MacMiniPage.vue';
 import MachinesPage from './views/MachinesPage.vue';
+import TvsPage from './views/TvsPage.vue';
+import ClientsPage from './views/ClientsPage.vue';
+import PrintPage from './views/PrintPage.vue';
 
 const pages = ref([]);
 const activePage = ref('websites');
